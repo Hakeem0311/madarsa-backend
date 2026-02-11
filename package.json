@@ -18,5 +18,12 @@
   "bugs": {
     "url": "https://github.com/Hakeem0311/madarsa-backend/issues"
   },
-  "homepage": "https://github.com/Hakeem0311/madarsa-backend#readme"
+  "homepage": "https://github.com/Hakeem0311/madarsa-backend#readme",
+  "dependencies": {
+    "bcrypt": "^6.0.0",
+    "cors": "^2.8.6",
+    "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.3",
+    "sqlite3": "^5.1.7"
+  }
 }
