@@ -8,13 +8,20 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Root route (for Render check)
+app.get("/", (req, res) => {
+  res.send("Madarsa Backend is running ✅");
+});
+
 const SECRET = "MADARSA_FAIZ_SECRET_KEY"; // change later
 
-// Database
+// ======================
+// DATABASE
+// ======================
 const db = new sqlite3.Database("./madarsa.db");
 
-// Create tables
 db.serialize(() => {
+  // Create tables
   db.run(`CREATE TABLE IF NOT EXISTS admins (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT UNIQUE,
@@ -39,32 +46,55 @@ db.serialize(() => {
     phone TEXT,
     salary TEXT
   )`);
+
+  // Create default admin if not exists
+  db.get("SELECT * FROM admins WHERE username = ?", ["admin"], async (err, row) => {
+    if (err) {
+      console.error("Admin check error:", err);
+      return;
+    }
+
+    if (!row) {
+      const hash = await bcrypt.hash("Faiz@786", 10);
+      db.run(
+        "INSERT INTO admins (username, password_hash) VALUES (?, ?)",
+        ["admin", hash]
+      );
+      console.log("✅ Default admin created: admin / Faiz@786");
+    } else {
+      console.log("ℹ️ Admin already exists");
+    }
+  });
 });
 
-// Create default admin
-db.get("SELECT * FROM admins WHERE username = 'admin'", async (err, row) => {
-  if (!row) {
-    const hash = await bcrypt.hash("Faiz@786", 10);
-    db.run("INSERT INTO admins (username, password_hash) VALUES (?, ?)", ["admin", hash]);
-    console.log("Default admin created: admin / Faiz@786");
-  }
+// ======================
+// ROOT TEST ROUTE
+// ======================
+app.get("/", (req, res) => {
+  res.send("Madarsa Backend is running ✅");
 });
 
-// Login route
+// ======================
+// LOGIN
+// ======================
 app.post("/api/login", (req, res) => {
   const { username, password } = req.body;
-  db.get("SELECT * FROM admins WHERE username = ?", [username], async (err, admin) => {
-    if (!admin) return res.status(401).json({ error: "Invalid login" });
 
-    const ok = await bcrypt.compare(password, admin.password_hash);
-    if (!ok) return res.status(401).json({ error: "Invalid login" });
+  db.get("SELECT * FROM admins WHERE username = ?", [username], async (err, row) => {
+    if (err) return res.status(500).json({ error: "DB error" });
+    if (!row) return res.status(401).json({ error: "Invalid credentials" });
 
-    const token = jwt.sign({ id: admin.id }, SECRET, { expiresIn: "1d" });
+    const ok = await bcrypt.compare(password, row.password_hash);
+    if (!ok) return res.status(401).json({ error: "Invalid credentials" });
+
+    const token = jwt.sign({ username }, SECRET, { expiresIn: "1d" });
     res.json({ token });
   });
 });
 
-// Auth middleware
+// ======================
+// AUTH MIDDLEWARE
+// ======================
 function auth(req, res, next) {
   const header = req.headers.authorization;
   if (!header) return res.sendStatus(401);
@@ -78,18 +108,9 @@ function auth(req, res, next) {
   }
 }
 
-// Test protected route
-app.get("/api/students", auth, (req, res) => {
-  db.all("SELECT * FROM students", [], (err, rows) => {
-    res.json(rows);
-  });
-});
-
 // ======================
 // STUDENTS CRUD (Protected)
 // ======================
-
-// Get all students
 app.get("/api/students", auth, (req, res) => {
   db.all("SELECT * FROM students", [], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -97,7 +118,6 @@ app.get("/api/students", auth, (req, res) => {
   });
 });
 
-// Add student
 app.post("/api/students", auth, (req, res) => {
   const { name, father, aadhar, dob, studentClass, phone, hifz } = req.body;
   db.run(
@@ -111,7 +131,6 @@ app.post("/api/students", auth, (req, res) => {
   );
 });
 
-// Update student
 app.put("/api/students/:id", auth, (req, res) => {
   const id = req.params.id;
   const { name, father, aadhar, dob, studentClass, phone, hifz, qualified } = req.body;
@@ -128,7 +147,6 @@ app.put("/api/students/:id", auth, (req, res) => {
   );
 });
 
-// Delete student
 app.delete("/api/students/:id", auth, (req, res) => {
   const id = req.params.id;
   db.run("DELETE FROM students WHERE id=?", [id], function (err) {
@@ -140,8 +158,6 @@ app.delete("/api/students/:id", auth, (req, res) => {
 // ======================
 // TEACHERS CRUD (Protected)
 // ======================
-
-// Get all teachers
 app.get("/api/teachers", auth, (req, res) => {
   db.all("SELECT * FROM teachers", [], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
@@ -149,7 +165,6 @@ app.get("/api/teachers", auth, (req, res) => {
   });
 });
 
-// Add teacher
 app.post("/api/teachers", auth, (req, res) => {
   const { name, phone, salary } = req.body;
   db.run(
@@ -162,7 +177,6 @@ app.post("/api/teachers", auth, (req, res) => {
   );
 });
 
-// Update teacher
 app.put("/api/teachers/:id", auth, (req, res) => {
   const id = req.params.id;
   const { name, phone, salary } = req.body;
@@ -177,7 +191,6 @@ app.put("/api/teachers/:id", auth, (req, res) => {
   );
 });
 
-// Delete teacher
 app.delete("/api/teachers/:id", auth, (req, res) => {
   const id = req.params.id;
   db.run("DELETE FROM teachers WHERE id=?", [id], function (err) {
@@ -187,14 +200,12 @@ app.delete("/api/teachers/:id", auth, (req, res) => {
 });
 
 // ======================
-// CHANGE PASSWORD (Protected)
+// CHANGE PASSWORD
 // ======================
-
 app.post("/api/change-password", auth, async (req, res) => {
   const { oldPassword, newPassword } = req.body;
 
-  // Get current admin (only one admin assumed)
-  db.get("SELECT * FROM admins WHERE id = 1", async (err, admin) => {
+  db.get("SELECT * FROM admins WHERE username = ?", ["admin"], async (err, admin) => {
     if (err || !admin) {
       return res.status(500).json({ error: "Admin not found" });
     }
@@ -207,8 +218,8 @@ app.post("/api/change-password", auth, async (req, res) => {
     const newHash = await bcrypt.hash(newPassword, 10);
 
     db.run(
-      "UPDATE admins SET password_hash = ? WHERE id = 1",
-      [newHash],
+      "UPDATE admins SET password_hash = ? WHERE username = ?",
+      [newHash, "admin"],
       function (err2) {
         if (err2) return res.status(500).json({ error: "Failed to update password" });
         res.json({ success: true });
@@ -217,10 +228,10 @@ app.post("/api/change-password", auth, async (req, res) => {
   });
 });
 
-
-// Start server
+// ======================
+// START SERVER
+// ======================
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log("Server running on port " + PORT);
 });
-
