@@ -8,20 +8,26 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Root route (for Render check)
+// ======================
+// CONFIG (ENV VARIABLES)
+// ======================
+const JWT_SECRET = process.env.JWT_SECRET || "DEV_FALLBACK_SECRET";
+const DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_DEFAULT_PASSWORD || "Faiz@786";
+
+// ======================
+// HEALTH CHECK
+// ======================
 app.get("/", (req, res) => {
   res.send("Madarsa Backend is running ✅");
 });
-
-const SECRET = "MADARSA_FAIZ_SECRET_KEY"; // change later
 
 // ======================
 // DATABASE
 // ======================
 const db = new sqlite3.Database("./madarsa.db");
 
+// Create tables
 db.serialize(() => {
-  // Create tables
   db.run(`CREATE TABLE IF NOT EXISTS admins (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT UNIQUE,
@@ -55,12 +61,12 @@ db.serialize(() => {
     }
 
     if (!row) {
-      const hash = await bcrypt.hash("Faiz@786", 10);
+      const hash = await bcrypt.hash(DEFAULT_ADMIN_PASSWORD, 10);
       db.run(
         "INSERT INTO admins (username, password_hash) VALUES (?, ?)",
         ["admin", hash]
       );
-      console.log("✅ Default admin created: admin / Faiz@786");
+      console.log("✅ Default admin created: admin / (password from env)");
     } else {
       console.log("ℹ️ Admin already exists");
     }
@@ -68,11 +74,20 @@ db.serialize(() => {
 });
 
 // ======================
-// ROOT TEST ROUTE
+// AUTH MIDDLEWARE
 // ======================
-app.get("/", (req, res) => {
-  res.send("Madarsa Backend is running ✅");
-});
+function auth(req, res, next) {
+  const header = req.headers.authorization;
+  if (!header) return res.sendStatus(401);
+
+  const token = header.split(" ")[1];
+  try {
+    jwt.verify(token, JWT_SECRET);
+    next();
+  } catch {
+    res.sendStatus(403);
+  }
+}
 
 // ======================
 // LOGIN
@@ -87,29 +102,13 @@ app.post("/api/login", (req, res) => {
     const ok = await bcrypt.compare(password, row.password_hash);
     if (!ok) return res.status(401).json({ error: "Invalid credentials" });
 
-    const token = jwt.sign({ username }, SECRET, { expiresIn: "1d" });
+    const token = jwt.sign({ username }, JWT_SECRET, { expiresIn: "1d" });
     res.json({ token });
   });
 });
 
 // ======================
-// AUTH MIDDLEWARE
-// ======================
-function auth(req, res, next) {
-  const header = req.headers.authorization;
-  if (!header) return res.sendStatus(401);
-
-  const token = header.split(" ")[1];
-  try {
-    jwt.verify(token, SECRET);
-    next();
-  } catch {
-    res.sendStatus(403);
-  }
-}
-
-// ======================
-// STUDENTS CRUD (Protected)
+// STUDENTS CRUD (PROTECTED)
 // ======================
 app.get("/api/students", auth, (req, res) => {
   db.all("SELECT * FROM students", [], (err, rows) => {
@@ -156,7 +155,7 @@ app.delete("/api/students/:id", auth, (req, res) => {
 });
 
 // ======================
-// TEACHERS CRUD (Protected)
+// TEACHERS CRUD (PROTECTED)
 // ======================
 app.get("/api/teachers", auth, (req, res) => {
   db.all("SELECT * FROM teachers", [], (err, rows) => {
@@ -200,7 +199,7 @@ app.delete("/api/teachers/:id", auth, (req, res) => {
 });
 
 // ======================
-// CHANGE PASSWORD
+// CHANGE PASSWORD (PROTECTED)
 // ======================
 app.post("/api/change-password", auth, async (req, res) => {
   const { oldPassword, newPassword } = req.body;
