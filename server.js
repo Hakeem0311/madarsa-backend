@@ -11,7 +11,7 @@ app.use(express.json());
 // ======================
 // CONFIG (ENV VARIABLES)
 // ======================
-const JWT_SECRET = process.env.JWT_SECRET || "DEV_FALLBACK_SECRET";
+const JWT_SECRET = process.env.JWT_SECRET || "DEV_FALLBACK_SECRET_CHANGE_ME";
 const DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_DEFAULT_PASSWORD || "Faiz@786";
 
 // ======================
@@ -26,7 +26,7 @@ app.get("/", (req, res) => {
 // ======================
 const db = new sqlite3.Database("./madarsa.db");
 
-// Create tables
+// Create tables + default admin
 db.serialize(() => {
   db.run(`CREATE TABLE IF NOT EXISTS admins (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -78,14 +78,23 @@ db.serialize(() => {
 // ======================
 function auth(req, res, next) {
   const header = req.headers.authorization;
-  if (!header) return res.sendStatus(401);
+  if (!header) {
+    return res.status(401).json({ error: "No token provided" });
+  }
 
-  const token = header.split(" ")[1];
+  const parts = header.split(" ");
+  if (parts.length !== 2 || parts[0] !== "Bearer") {
+    return res.status(401).json({ error: "Invalid token format" });
+  }
+
+  const token = parts[1];
+
   try {
-    jwt.verify(token, JWT_SECRET);
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.user = decoded;
     next();
-  } catch {
-    res.sendStatus(403);
+  } catch (err) {
+    return res.status(403).json({ error: "Invalid or expired token" });
   }
 }
 
@@ -95,6 +104,10 @@ function auth(req, res, next) {
 app.post("/api/login", (req, res) => {
   const { username, password } = req.body;
 
+  if (!username || !password) {
+    return res.status(400).json({ error: "Username and password required" });
+  }
+
   db.get("SELECT * FROM admins WHERE username = ?", [username], async (err, row) => {
     if (err) return res.status(500).json({ error: "DB error" });
     if (!row) return res.status(401).json({ error: "Invalid credentials" });
@@ -102,7 +115,7 @@ app.post("/api/login", (req, res) => {
     const ok = await bcrypt.compare(password, row.password_hash);
     if (!ok) return res.status(401).json({ error: "Invalid credentials" });
 
-    const token = jwt.sign({ username }, JWT_SECRET, { expiresIn: "1d" });
+    const token = jwt.sign({ username: row.username }, JWT_SECRET, { expiresIn: "1d" });
     res.json({ token });
   });
 });
@@ -111,14 +124,20 @@ app.post("/api/login", (req, res) => {
 // STUDENTS CRUD (PROTECTED)
 // ======================
 app.get("/api/students", auth, (req, res) => {
-  db.all("SELECT * FROM students", [], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json(rows);
-  });
+  db.all(
+    "SELECT id, name, father, aadhar, dob, class AS studentClass, phone, hifz, qualified FROM students",
+    [],
+    (err, rows) => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json(rows);
+    }
+  );
 });
+
 
 app.post("/api/students", auth, (req, res) => {
   const { name, father, aadhar, dob, studentClass, phone, hifz } = req.body;
+
   db.run(
     `INSERT INTO students (name, father, aadhar, dob, class, phone, hifz, qualified)
      VALUES (?, ?, ?, ?, ?, ?, ?, 0)`,
@@ -203,6 +222,10 @@ app.delete("/api/teachers/:id", auth, (req, res) => {
 // ======================
 app.post("/api/change-password", auth, async (req, res) => {
   const { oldPassword, newPassword } = req.body;
+
+  if (!oldPassword || !newPassword) {
+    return res.status(400).json({ error: "Both passwords required" });
+  }
 
   db.get("SELECT * FROM admins WHERE username = ?", ["admin"], async (err, admin) => {
     if (err || !admin) {
